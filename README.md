@@ -4,6 +4,7 @@ Educational Implementation of the reinforcement learning algorithms tabular Q-le
 <div align="center">
   <img src="./src/q_learning_animation.gif" alt="Q-Learning Animation" width="600">
 </div>
+
 ## Getting Started
 
 ### Clone the Repository
