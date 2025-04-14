@@ -1,4 +1,4 @@
-# chemengRL
+# chemengRL 🎓
 Educational Implementation of the reinforcement learning algorithms tabular Q-learning and DQN for chemical engineering applications.
 
 <div align="center">
