@@ -18,7 +18,7 @@ cd chemengRL
 Install the required environment using Conda:
 ```bash
 conda env create -f practical_rl.yml
-conda activate chemengRL
+conda activate prac_rl
 ```
 
 ### Notebooks for Reactors
