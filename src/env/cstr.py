@@ -205,11 +205,11 @@ class DiscreteReactorWrapper(gym.Wrapper):
         # State text label (using actual continuous values derived for plotting)
         # These are cell centers, for actual value use env.x
         # For label, use the center of the cell
-        actual_ca_val_for_label, actual_t_val_for_label = self.continuous_env.x[0], self.continuous_env.x[1] # from underlying env if available
-        state_text_current = f"Ca={actual_ca_val_for_label:.3f}\nT={actual_t_val_for_label:.1f}K"
-        ax.text(current_t_val, current_ca_val - (self.ca_bins[1]-self.ca_bins[0])*0.8, state_text_current, # Adjusted position
-                color='white', ha='center', va='top',
-                bbox=dict(facecolor='black', alpha=0.7, boxstyle='round,pad=0.2'), zorder=21)
+        # actual_ca_val_for_label, actual_t_val_for_label = self.continuous_env.x[0], self.continuous_env.x[1] # from underlying env if available
+        # state_text_current = f"CaT={actual_t_val_for_label:.1f}K"
+        # ax.text(current_t_val, current_ca_val - (self.ca_bins[1]-self.ca_bins[0])*0.8, state_text_current, # Adjusted position
+        #         color='white', ha='center', va='top',
+        #         bbox=dict(facecolor='black', alpha=0.7, boxstyle='round,pad=0.2'), zorder=21)
 
         # Axis grid, limits, and labels (using continuous values)
         ax.set_xlim(self.temp_bins[0], self.temp_bins[-1])

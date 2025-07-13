@@ -3,14 +3,41 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import random
 from collections import deque
-import copy # For deep copying models
+import copy
 
-# PyTorch Imports for DQN
 import torch
 import torch.nn as nn
 import torch.optim as optim
 
-# --- Environment Availability Check ---
+# Professional LaTeX setup
+plt.rcParams.update({
+    'text.usetex': True,
+    'font.family': 'serif',
+    'font.serif': ['Computer Modern'],
+    'font.size': 12,
+    'axes.labelsize': 12,
+    'axes.titlesize': 12,
+    'xtick.labelsize': 12,
+    'ytick.labelsize': 12,
+    'legend.fontsize': 12,
+    'figure.titlesize': 12,
+    'text.latex.preamble': r'\usepackage{amsmath}\usepackage{amssymb}'
+})
+
+# Professional color scheme
+COLORS = {
+    'primary': '#2E3440',      # Dark blue-gray
+    'secondary': '#5E81AC',    # Blue
+    'accent': '#98df8a',       # Red
+    'goal': '#D08770',         # Orange
+    'start': '#aec7e8',        # Yellow
+    'end': '#A3BE8C',          # Green
+    'grid': '#4C566A',         # Gray
+    'background': '#ECEFF4',   # Light gray
+    'dataset': '#7f7f7f',      # Light blue
+    'rollout': '#c5b0d5'       # Purple
+}
+
 _PCGYM_AVAILABLE = False
 try:
     from pcgym import make_env
@@ -18,10 +45,8 @@ try:
     print("pcgym imported successfully.")
 except ImportError as e:
     print(f"Error importing pcgym: {e}")
-    print("Please ensure 'pcgym' is installed and in the Python path.")
     print("DQN training, dataset generation, CQL training, and plotting will be skipped.")
 
-# --- DQN and CQL Agent Definitions ---
 class QNetwork(nn.Module):
     def __init__(self, state_size, action_size, hidden_dim1=128, hidden_dim2=128):
         super(QNetwork, self).__init__()
@@ -83,14 +108,6 @@ class DQN_Agent:
         continuous_action_val = np.array([self.discrete_actions_map_to_continuous[action_idx]])
         return continuous_action_val, action_idx
 
-    def get_q_values(self, state): # For potential evaluation, not used in this reduced script's main flow
-        state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
-        self.q_network.eval()
-        with torch.no_grad():
-            q_values = self.q_network(state_tensor)
-        self.q_network.train()
-        return q_values.cpu().numpy()[0]
-
     def train_batch(self):
         if len(self.memory) < self.batch_size:
             return 0.0
@@ -139,16 +156,15 @@ class CQL_Agent(DQN_Agent):
         self.learning_rate = learning_rate 
         self.update_target_freq = target_update_freq
         self.train_step_counter = 0
-        self.memory = deque(maxlen=memory_size) # Override DQN's memory
+        self.memory = deque(maxlen=memory_size)
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=self.learning_rate)
-        # CQL is offline, so epsilon is typically 0 during its "action selection" (evaluation)
         self.epsilon = 0.0 
         self.epsilon_min = 0.0
         self.epsilon_decay = 1.0
 
-    def train_batch(self): # Overrides DQN_Agent.train_batch
+    def train_batch(self):
         if len(self.memory) < self.batch_size:
-            return 0.0, 0.0, 0.0 # total_loss, cql_term_loss, bellman_loss
+            return 0.0, 0.0, 0.0
 
         minibatch = random.sample(self.memory, self.batch_size)
         states = np.array([exp[0] for exp in minibatch])
@@ -158,27 +174,20 @@ class CQL_Agent(DQN_Agent):
         dones = np.array([exp[4] for exp in minibatch])
 
         states_tensor = torch.FloatTensor(states).to(self.device)
-        actions_idx_tensor = torch.LongTensor(actions_idx).unsqueeze(1).to(self.device) # Ensure it's [B, 1]
+        actions_idx_tensor = torch.LongTensor(actions_idx).unsqueeze(1).to(self.device)
         rewards_tensor = torch.FloatTensor(rewards).to(self.device)
         next_states_tensor = torch.FloatTensor(next_states).to(self.device)
         dones_tensor = torch.FloatTensor(dones).to(self.device)
 
-        # Bellman loss part
         current_q_values_for_dataset_actions = self.q_network(states_tensor).gather(1, actions_idx_tensor).squeeze(1)
         with torch.no_grad():
-            # Double Q-learning style target: Use online net to select actions, target net to evaluate
             next_actions_indices_online_net = self.q_network(next_states_tensor).argmax(dim=1, keepdim=True)
             next_q_values_target_net = self.target_network(next_states_tensor).gather(1, next_actions_indices_online_net).squeeze(1)
             target_q_values = rewards_tensor + (1 - dones_tensor) * self.gamma * next_q_values_target_net
         bellman_loss = nn.MSELoss()(current_q_values_for_dataset_actions, target_q_values)
 
-        # CQL conservative term part
-        q_values_all_actions_current_net = self.q_network(states_tensor) # [B, num_actions]
-        # logsumexp for stability
-        log_sum_exp_q = torch.logsumexp(q_values_all_actions_current_net, dim=1) # [B]
-        # Q-values for actions taken in the dataset (already computed)
-        # current_q_values_for_dataset_actions is [B]
-        
+        q_values_all_actions_current_net = self.q_network(states_tensor)
+        log_sum_exp_q = torch.logsumexp(q_values_all_actions_current_net, dim=1)
         cql_diff = log_sum_exp_q - current_q_values_for_dataset_actions
         cql_term_loss = cql_diff.mean()
         
@@ -186,7 +195,7 @@ class CQL_Agent(DQN_Agent):
 
         self.optimizer.zero_grad()
         total_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), 1.0) # Clip gradients
+        torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), 1.0)
         self.optimizer.step()
 
         self.train_step_counter += 1
@@ -195,63 +204,58 @@ class CQL_Agent(DQN_Agent):
         
         return total_loss.item(), cql_term_loss.item(), bellman_loss.item()
 
-    def act(self, state, training=False): # Override DQN_Agent.act for CQL (no epsilon-greedy)
+    def act(self, state, training=False):
         state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
-        self.q_network.eval() # Set to eval mode for action selection
+        self.q_network.eval()
         with torch.no_grad():
             action_values = self.q_network(state_tensor)
-        self.q_network.train() # Set back to train mode
+        self.q_network.train()
         action_idx = torch.argmax(action_values).item()
         
-        if not self.discrete_actions_map_to_continuous.any(): # Should not happen if initialized correctly
+        if not self.discrete_actions_map_to_continuous.any():
             continuous_action_val = np.array([0.0]) 
         else:
             continuous_action_val = np.array([self.discrete_actions_map_to_continuous[action_idx]])
         return continuous_action_val, action_idx
 
-# --- Environment Creation ---
 def create_continuous_reactor_env_for_dqn():
     if not _PCGYM_AVAILABLE:
         return None
     try:
-        nsteps = 60 # Max episode length
-        T = 26.0 # Simulation time per step (not total episode time)
-        goal_ca_cont = 0.86 # Target concentration of Ca
-        SP = {'Ca': [goal_ca_cont for _ in range(int(nsteps))]} # Setpoint for Ca
+        nsteps = 60
+        T = 26.0
+        goal_ca_cont = 0.86
+        SP = {'Ca': [goal_ca_cont for _ in range(int(nsteps))]}
 
-        # Action space: Tcin - Inlet temperature of cooling liquid
         action_space_cont = {'low': np.array([295.]), 'high': np.array([302.])}
         
-        # Observation space: [Ca, Temp, Ca_SP]
         observation_space_cont = {
-            'low': np.array([0.7, 315., 0.8], dtype=np.float32), # Min values for Ca, Temp, Ca_SP
-            'high': np.array([0.9, 335., 0.9], dtype=np.float32), # Max values for Ca, Temp, Ca_SP
+            'low': np.array([0.7, 315., 0.8], dtype=np.float32),
+            'high': np.array([0.9, 335., 0.9], dtype=np.float32),
         }
-        r_scale = {'Ca': 1e3} # Reward scaling for Ca error
-        initial_x0 = np.array([0.72, 328., goal_ca_cont]) # Initial state [Ca, T, Ca_SP]
+        r_scale = {'Ca': 1e3}
+        initial_x0 = np.array([0.72, 328., goal_ca_cont])
 
         env_params = {
             'N': nsteps, 'tsim': T, 'SP': SP, 
             'o_space': observation_space_cont, 'a_space': action_space_cont, 
             'x0': initial_x0, 'model': 'cstr', 'r_scale': r_scale,
-            'normalise_a': True,  # Action normalization (often to [-1, 1])
-            'normalise_o': True,  # Observation normalization (often to [-1, 1])
-            'noise': True, 'integration_method': 'casadi', 'noise_percentage': 0.001
+            'normalise_a': True, 'normalise_o': True, 'noise': True, 
+            'integration_method': 'casadi', 'noise_percentage': 0.001
         }
         cont_env = make_env(env_params)
-        cont_env.goal_ca_continuous = goal_ca_cont # Store for reference
+        cont_env.goal_ca_continuous = goal_ca_cont
         print("Continuous CSTR environment for DQN/CQL created successfully.")
         return cont_env
     except Exception as e:
         print(f"Error creating continuous CSTR environment for DQN/CQL: {e}")
         return None
 
-# --- DQN Training (for data collection policy) ---
 def train_dqn_agent(dqn_env, dqn_agent, episodes, dqn_action_size):
     if dqn_env is None or dqn_agent is None:
         return [], {}
     
-    print(f"Starting DQN training for {episodes} episodes (to get a data collection policy)...")
+    print(f"Starting DQN training for {episodes} episodes...")
     dqn_scores = []
     dqn_q_func_snapshots = {'early': None, 'middle': None, 'late': None}
     ep_early = max(1, int(episodes * 0.05))
@@ -260,13 +264,13 @@ def train_dqn_agent(dqn_env, dqn_agent, episodes, dqn_action_size):
     snapshot_agent = DQN_Agent(dqn_agent.state_size, dqn_action_size,
                                {'low': np.array([dqn_agent.action_low_cont]), 
                                 'high': np.array([dqn_agent.action_high_cont])},
-                               device=dqn_agent.device) # Temp agent for clean weight saving
+                               device=dqn_agent.device)
     
-    progress_bar = tqdm(range(episodes), desc="DQN Training for Data Policy")
+    progress_bar = tqdm(range(episodes), desc="DQN Training")
     for e in progress_bar:
-        state_cont, _ = dqn_env.reset() # State is normalized if env.normalise_o is True
+        state_cont, _ = dqn_env.reset()
         total_reward_ep = 0
-        for step_num in range(dqn_env.N): # dqn_env.N is max_episode_steps
+        for step_num in range(dqn_env.N):
             continuous_action_val, action_idx = dqn_agent.act(state_cont, training=True)
             next_state_cont, reward, terminated, truncated, _ = dqn_env.step(continuous_action_val)
             done = terminated or truncated
@@ -278,9 +282,9 @@ def train_dqn_agent(dqn_env, dqn_agent, episodes, dqn_action_size):
             if done:
                 break
         dqn_scores.append(total_reward_ep)
-        progress_bar.set_postfix({'Episode Reward': f"{total_reward_ep:.1f}", 
-                                  'Epsilon': f"{dqn_agent.epsilon:.2f}", 
-                                  'Loss': f"{loss:.3f}"})
+        progress_bar.set_postfix({'R': f"{total_reward_ep:.1f}", 
+                                  'Eps': f"{dqn_agent.epsilon:.2f}", 
+                                  'L': f"{loss:.3f}"})
         
         if e == ep_early:
             snapshot_agent.q_network.load_state_dict(dqn_agent.q_network.state_dict())
@@ -289,7 +293,7 @@ def train_dqn_agent(dqn_env, dqn_agent, episodes, dqn_action_size):
             snapshot_agent.q_network.load_state_dict(dqn_agent.q_network.state_dict())
             dqn_q_func_snapshots['middle'] = copy.deepcopy(snapshot_agent.q_network.state_dict())
             
-    snapshot_agent.q_network.load_state_dict(dqn_agent.q_network.state_dict()) # Final snapshot for 'late'
+    snapshot_agent.q_network.load_state_dict(dqn_agent.q_network.state_dict())
     dqn_q_func_snapshots['late'] = copy.deepcopy(snapshot_agent.q_network.state_dict())
 
     if dqn_q_func_snapshots['early'] is None and dqn_q_func_snapshots['late'] is not None:
@@ -299,55 +303,51 @@ def train_dqn_agent(dqn_env, dqn_agent, episodes, dqn_action_size):
         
     return dqn_scores, dqn_q_func_snapshots
 
-# --- Utility and Plotting Functions ---
-def plot_reward_curve(scores, title, algo_name):
-    plt.figure(figsize=(8, 4))
-    plt.plot(scores, alpha=0.7, label=f'Episode Reward ({algo_name})')
+def plot_reward_curve(scores, algo_name, color):
+    fig, ax = plt.subplots(figsize=(8, 3), tight_layout=True)
+    ax.plot(scores, alpha=0.7, color=color, linewidth=0.8, label=f'{algo_name}')
+    
     window = max(1, len(scores) // 20)
     if len(scores) >= window and window > 0:
         moving_avg = np.convolve(scores, np.ones(window)/window, mode='valid')
-        plt.plot(np.arange(window - 1, len(scores)), moving_avg, color='red', label=f'{window}-Ep Moving Avg')
-    plt.title(title, fontsize=12)
-    plt.xlabel('Episode' if "DQN" in algo_name else "Training Step", fontsize=10) # Steps for CQL loss
-    plt.ylabel('Total Reward' if "DQN" in algo_name else "Loss Value", fontsize=10)
-    plt.legend(fontsize=8)
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.tight_layout()
+        ax.plot(np.arange(window - 1, len(scores)), moving_avg, 
+                color=COLORS['accent'], linewidth=1.5, label=f'{window}-Episode Average')
+    
+    ax.set_xlabel('Episode')
+    ax.set_ylabel('Total Reward')
+    ax.legend(frameon=True, fancybox=False, shadow=False, framealpha=0.9, edgecolor=COLORS['grid'])
+    # ax.grid(True, alpha=0.3, color=COLORS['grid'], linewidth=0.5)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
     plt.show()
 
-OBS_LOW_ORIG_FOR_DQN_ENV = np.array([0.7, 315., 0.8], dtype=np.float32) # Ca, Temp, Ca_SP
-OBS_HIGH_ORIG_FOR_DQN_ENV = np.array([0.9, 335., 0.9], dtype=np.float32) # Ca, Temp, Ca_SP
+OBS_LOW_ORIG_FOR_DQN_ENV = np.array([0.7, 315., 0.8], dtype=np.float32)
+OBS_HIGH_ORIG_FOR_DQN_ENV = np.array([0.9, 335., 0.9], dtype=np.float32)
 
 def denormalize_state_vector(norm_state_vec, low_orig, high_orig):
-    # Assumes normalization to [-1, 1] range
     norm_state_vec = np.asarray(norm_state_vec)
     low_orig = np.asarray(low_orig)
     high_orig = np.asarray(high_orig)
     return (norm_state_vec + 1.0) / 2.0 * (high_orig - low_orig) + low_orig
 
-def plot_dataset_and_cql_rollout(dataset_trajectories_normalized_states, # MODIFIED: List of trajectories
+def plot_dataset_and_cql_rollout(dataset_trajectories_normalized_states,
                                  cql_rollout_normalized_states,
                                  ca_plot_lims_orig_edges, temp_plot_lims_orig_edges,
-                                 goal_ca_val_orig,
-                                 title="CQL Offline Dataset and Agent Rollout"):
-    fig, ax = plt.subplots(figsize=(10, 8))
+                                 goal_ca_val_orig):
+    fig, ax = plt.subplots(figsize=(5, 5), tight_layout=True)
 
     # Plot dataset trajectories
     if dataset_trajectories_normalized_states:
-        print(f"Plotting {len(dataset_trajectories_normalized_states)} dataset trajectories.")
         for i, trajectory_norm in enumerate(dataset_trajectories_normalized_states):
-            if not trajectory_norm: continue # Skip empty trajectories
+            if not trajectory_norm: continue
             traj_points_norm = np.array(trajectory_norm)
-            # Ensure we only use the Ca and Temp components for denormalization if state has more dims
             traj_orig = denormalize_state_vector(traj_points_norm[:, :2], 
                                                  OBS_LOW_ORIG_FOR_DQN_ENV[:2], 
                                                  OBS_HIGH_ORIG_FOR_DQN_ENV[:2])
             
-            label = "Dataset Trajectories" if i == 0 else None # Label only the first one for legend
-            ax.plot(traj_orig[:, 1], traj_orig[:, 0], lw=1.0, alpha=0.25, color='cornflowerblue', label=label, zorder=2)
-            # Optionally, mark start/end of dataset trajectories if needed
-            # ax.plot(traj_orig[0, 1], traj_orig[0, 0], 'o', ms=3, color='blue', alpha=0.2)
-
+            label = 'Dataset' if i == 0 else None
+            ax.plot(traj_orig[:, 1], traj_orig[:, 0], linewidth=1.0, alpha=0.4, 
+                    color=COLORS['dataset'], label=label, zorder=2)
 
     # Plot CQL agent rollout trajectory
     if cql_rollout_normalized_states:
@@ -355,54 +355,52 @@ def plot_dataset_and_cql_rollout(dataset_trajectories_normalized_states, # MODIF
         rollout_orig = denormalize_state_vector(rollout_np_norm[:, :2], 
                                                 OBS_LOW_ORIG_FOR_DQN_ENV[:2], 
                                                 OBS_HIGH_ORIG_FOR_DQN_ENV[:2])
-        ax.plot(rollout_orig[:, 1], rollout_orig[:, 0], color='red', lw=2.5, label="CQL Agent Rollout", zorder=3)
+        ax.plot(rollout_orig[:, 1], rollout_orig[:, 0], color=COLORS['rollout'], 
+                linewidth=1.5, label="CQL", zorder=3)
         if len(rollout_orig) > 0:
-            ax.plot(rollout_orig[0, 1], rollout_orig[0, 0], 'p', ms=10, color='magenta', markeredgecolor='black', label="Rollout Start", zorder=4)
-            ax.plot(rollout_orig[-1, 1], rollout_orig[-1, 0], 'X', ms=10, color='orange', markeredgecolor='black', label="Rollout End", zorder=4)
-
-    ax.axhline(y=goal_ca_val_orig, color='green', linestyle='--', linewidth=2, label=f'Goal Ca ({goal_ca_val_orig:.2f})', zorder=1)
-
-    ax.set_xlabel("Reactor Temp. (K)", fontsize=12)
-    ax.set_ylabel("Concentration Ca (mol/L)", fontsize=12)
-    ax.set_title(title, fontsize=14)
+            ax.plot(rollout_orig[0, 1], rollout_orig[0, 0], 'o', markersize=8, 
+                    color=COLORS['start'], markeredgecolor=COLORS['primary'], 
+                    label=r"$\textbf{x}_0$", zorder=4)
     
-    ax.legend(fontsize=10)
-    ax.grid(True, linestyle=':', alpha=0.6)
 
-    # Set plot limits using the provided edges
+    ax.axhline(y=goal_ca_val_orig, color='#98df8a', linestyle='--', 
+               linewidth=2, label=r'Goal', zorder=1)
+
+    ax.set_xlabel(r"Temperature $T$ (K)")
+    ax.set_ylabel(r"Concentration $C_A$ (mol/L)")
+    
+    ax.legend(frameon=False, fancybox=False, shadow=False, framealpha=0.9, edgecolor=COLORS['grid'],
+              ncol=5, loc='upper center', bbox_to_anchor=(0.5, 1.13), columnspacing=0.8)
+    # ax.grid(True, alpha=0.3, color=COLORS['grid'], linewidth=0.5)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
     ax.set_xlim(temp_plot_lims_orig_edges[0], temp_plot_lims_orig_edges[-1])
     ax.set_ylim(ca_plot_lims_orig_edges[0], ca_plot_lims_orig_edges[-1])
 
-    plt.tight_layout()
-    plt.savefig('src/figs/offline_plot.svg')
+    plt.savefig('offline_plot.pdf', bbox_inches='tight', dpi=300)
     plt.show()
 
-# --- Main Script ---
+# Main Script
 if __name__ == "__main__":
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {DEVICE}")
 
-    # Configuration
-    VIS_GRID_SIZE = (10, 10) # Used for plot limit granularity
-    GOAL_CA_SHARED = 0.86    # Shared goal Ca for environment and plotting
+    VIS_GRID_SIZE = (10, 10)
+    GOAL_CA_SHARED = 0.86
 
-    DQN_EPISODES_FOR_POLICY = 50 if _PCGYM_AVAILABLE else 0 # Episodes to train DQN for data collection policy
-    DQN_ACTION_SIZE = 21     # Number of discrete actions for DQN/CQL
-
-    DATA_COLLECTION_EPISODES_DQN = 10 # Number of episodes to run DQN to collect data for CQL
-                                      # Reduced for clearer plotting, adjust as needed
-    
-    CQL_TRAINING_STEPS = 10000 # Training steps for CQL agent
+    DQN_EPISODES_FOR_POLICY = 40 if _PCGYM_AVAILABLE else 0
+    DQN_ACTION_SIZE = 21
+    DATA_COLLECTION_EPISODES_DQN = 10
+    CQL_TRAINING_STEPS = 1000
     CQL_BATCH_SIZE = 64
     CQL_ALPHA = 5.0
     CQL_LEARNING_RATE = 1e-4
     CQL_TARGET_UPDATE_FREQ = 10
 
-    # Initialize DQN components
     continuous_env_for_dqn = None
     dqn_agent = None
-    dqn_state_size = 3 # Ca, Temp, Ca_SP (as defined in create_continuous_reactor_env_for_dqn)
-    # Default action bounds, will be updated if env is created
+    dqn_state_size = 3
     dqn_action_bounds = {'low': np.array([295.]), 'high': np.array([302.])} 
     
     dqn_scores_history = []
@@ -418,42 +416,34 @@ if __name__ == "__main__":
             dqn_agent_for_policy = DQN_Agent(dqn_state_size, DQN_ACTION_SIZE, dqn_action_bounds, device=DEVICE)
             dqn_scores_history, dqn_q_func_state_dicts = train_dqn_agent(
                 continuous_env_for_dqn, dqn_agent_for_policy, DQN_EPISODES_FOR_POLICY, DQN_ACTION_SIZE)
-            plot_reward_curve(dqn_scores_history, "DQN Training Rewards (for Data Policy)", "DQN")
-            
-            if dqn_q_func_state_dicts['middle'] is not None:
-                print(f"DQN 'middle' stage model for data collection captured after {int(DQN_EPISODES_FOR_POLICY * 0.5)} episodes.")
-            else:
-                print("DQN 'middle' stage model not captured (possibly too few episodes). Using 'late' model if available.")
+            plot_reward_curve(dqn_scores_history, "DQN", COLORS['secondary'])
     else: 
-        print("Skipping DQN training for data policy (pcgym not available or DQN_EPISODES_FOR_POLICY is 0).")
+        print("Skipping DQN training for data policy.")
 
     # Data Collection for CQL
-    offline_dataset_for_cql_transitions = [] # For CQL training: list of (s,a,r,s',d)
-    offline_dataset_trajectories_for_plot = [] # For plotting: list of state trajectories [[s0,s1..],[s0,s1..]]
+    offline_dataset_for_cql_transitions = []
+    offline_dataset_trajectories_for_plot = []
 
     dqn_model_weights_for_dataset = dqn_q_func_state_dicts['middle']
     if dqn_model_weights_for_dataset is None and dqn_q_func_state_dicts['late'] is not None:
-        print("Using 'late' DQN model for dataset generation as 'middle' is unavailable.")
         dqn_model_weights_for_dataset = dqn_q_func_state_dicts['late']
 
     if dqn_model_weights_for_dataset is not None and continuous_env_for_dqn is not None:
         print(f"\nGenerating dataset using trained DQN agent for {DATA_COLLECTION_EPISODES_DQN} episodes...")
-        # Use a fresh environment instance for data collection if desired, or reuse
-        # data_collection_env = create_continuous_reactor_env_for_dqn() # Optional: fresh env
-        data_collection_env = continuous_env_for_dqn # Reuse existing env object
+        data_collection_env = continuous_env_for_dqn
 
         if data_collection_env:
             data_collector_agent = DQN_Agent(dqn_state_size, DQN_ACTION_SIZE, dqn_action_bounds, device=DEVICE)
             data_collector_agent.q_network.load_state_dict(dqn_model_weights_for_dataset)
-            data_collector_agent.update_target_network() # Sync target net
-            data_collector_agent.epsilon = 0.1 # Use some exploration for diverse data
+            data_collector_agent.update_target_network()
+            data_collector_agent.epsilon = 0.1
 
             for ep in tqdm(range(DATA_COLLECTION_EPISODES_DQN), desc="Dataset Generation"):
-                current_episode_states_normalized = [] # For plotting
+                current_episode_states_normalized = []
                 state_cont_norm, _ = data_collection_env.reset()
                 current_episode_states_normalized.append(state_cont_norm.copy())
 
-                for _ in range(data_collection_env.N): # Max steps per episode
+                for _ in range(data_collection_env.N):
                     continuous_action_val, action_idx = data_collector_agent.act(state_cont_norm, training=True)
                     next_state_cont_norm, reward, terminated, truncated, _ = data_collection_env.step(continuous_action_val)
                     done = terminated or truncated
@@ -466,13 +456,9 @@ if __name__ == "__main__":
                         break
                 offline_dataset_trajectories_for_plot.append(current_episode_states_normalized)
             
-            # data_collection_env.close() # Close if it was a fresh env
             print(f"Generated dataset with {len(offline_dataset_for_cql_transitions)} transitions.")
-            print(f"Collected {len(offline_dataset_trajectories_for_plot)} trajectories for plotting.")
-        else:
-            print("Failed to get/create environment for data collection.")
     else:
-        print("Skipping dataset generation: DQN model for data collection or environment not available.")
+        print("Skipping dataset generation: DQN model or environment not available.")
 
     # CQL Agent Training
     cql_agent = None
@@ -483,11 +469,10 @@ if __name__ == "__main__":
             continuous_action_bounds=dqn_action_bounds, device=DEVICE,
             cql_alpha=CQL_ALPHA, learning_rate=CQL_LEARNING_RATE,
             batch_size=CQL_BATCH_SIZE, target_update_freq=CQL_TARGET_UPDATE_FREQ,
-            memory_size=len(offline_dataset_for_cql_transitions) + 100 # Ensure memory can hold all data
+            memory_size=len(offline_dataset_for_cql_transitions) + 100
         )
-        for experience in offline_dataset_for_cql_transitions: # Populate memory
+        for experience in offline_dataset_for_cql_transitions:
             cql_agent.remember(*experience)
-        print(f"CQL agent memory populated with {len(cql_agent.memory)} transitions.")
 
         cql_total_losses, cql_term_losses, cql_bellman_losses = [], [], []
         progress_bar_cql = tqdm(range(CQL_TRAINING_STEPS), desc="CQL Training")
@@ -497,34 +482,38 @@ if __name__ == "__main__":
             cql_term_losses.append(cql_loss)
             cql_bellman_losses.append(bellman_loss)
             if step % 100 == 0:
-                progress_bar_cql.set_postfix({'Total L': f"{total_loss:.3f}", 
-                                              'CQL L': f"{cql_loss:.3f}", 
-                                              'Bellman L': f"{bellman_loss:.3f}"})
+                progress_bar_cql.set_postfix({'Total': f"{total_loss:.3f}", 
+                                              'CQL': f"{cql_loss:.3f}", 
+                                              'Bellman': f"{bellman_loss:.3f}"})
         
         # Plot CQL losses
-        plt.figure(figsize=(10, 4))
-        plt.plot(cql_total_losses, label='Total Loss', alpha=0.7)
-        plt.plot(cql_term_losses, label=f'CQL Term Loss (alpha={CQL_ALPHA})', alpha=0.7)
-        plt.plot(cql_bellman_losses, label='Bellman Loss', alpha=0.7)
-        plt.xlabel("Training Step"); plt.ylabel("Loss Value"); plt.title("CQL Agent Training Losses")
-        plt.legend(); plt.grid(True, linestyle='--', alpha=0.5); plt.tight_layout(); plt.show()
-        print("CQL training finished.")
+        fig, ax = plt.subplots(figsize=(8, 3), tight_layout=True)
+        ax.plot(cql_total_losses, label='Total', alpha=0.8, color=COLORS['primary'], linewidth=1.0)
+        ax.plot(cql_term_losses, label=fr'CQL ($\alpha={CQL_ALPHA}$)', alpha=0.8, color=COLORS['accent'], linewidth=1.0)
+        ax.plot(cql_bellman_losses, label='Bellman', alpha=0.8, color=COLORS['secondary'], linewidth=1.0)
+        ax.set_xlabel("Training Step")
+        ax.set_ylabel("Loss")
+        ax.legend(frameon=True, fancybox=False, shadow=False, framealpha=0.9, edgecolor=COLORS['grid'])
+        # ax.grid(True, alpha=0.3, color=COLORS['grid'], linewidth=0.5)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        plt.savefig('cql_losses.pdf', bbox_inches='tight', dpi=300)
+        plt.show()
     else:
         print("Skipping CQL training: No dataset or environment for CQL.")
 
     # CQL Agent Rollout and Plotting
     if cql_agent is not None and continuous_env_for_dqn is not None:
         print("\nGenerating CQL agent rollout for plotting...")
-        # rollout_env = create_continuous_reactor_env_for_dqn() # Optional: fresh env for rollout
-        rollout_env = continuous_env_for_dqn # Reuse env
+        rollout_env = continuous_env_for_dqn
         
         if rollout_env:
             cql_rollout_normalized_states = []
-            state_norm, _ = rollout_env.reset(seed=42) # Use a fixed seed for reproducible rollout
+            state_norm, _ = rollout_env.reset(seed=42)
             cql_rollout_normalized_states.append(state_norm.copy())
             total_rollout_reward = 0
-            for _ in range(rollout_env.N): # Max steps
-                continuous_action_val, _ = cql_agent.act(state_norm) # training=False is implicit in CQL.act
+            for _ in range(rollout_env.N):
+                continuous_action_val, _ = cql_agent.act(state_norm)
                 next_state_norm, reward, terminated, truncated, _ = rollout_env.step(continuous_action_val)
                 
                 cql_rollout_normalized_states.append(next_state_norm.copy())
@@ -533,10 +522,7 @@ if __name__ == "__main__":
                 state_norm = next_state_norm
                 if done:
                     break
-            # rollout_env.close() # Close if it was a fresh env
-            print(f"CQL agent rollout completed. Steps: {len(cql_rollout_normalized_states)}, Reward: {total_rollout_reward:.2f}")
 
-            # Define plot limits based on original observation space and VIS_GRID_SIZE for granularity
             ca_edges_for_plot_limits = np.linspace(OBS_LOW_ORIG_FOR_DQN_ENV[0], OBS_HIGH_ORIG_FOR_DQN_ENV[0], VIS_GRID_SIZE[0] + 1)
             temp_edges_for_plot_limits = np.linspace(OBS_LOW_ORIG_FOR_DQN_ENV[1], OBS_HIGH_ORIG_FOR_DQN_ENV[1], VIS_GRID_SIZE[1] + 1)
             goal_ca_to_plot = GOAL_CA_SHARED
@@ -546,17 +532,14 @@ if __name__ == "__main__":
                 cql_rollout_normalized_states,
                 ca_edges_for_plot_limits, 
                 temp_edges_for_plot_limits, 
-                goal_ca_to_plot,
-                title="CQL: Offline Dataset Trajectories and Trained Agent Rollout"
+                goal_ca_to_plot
             )
         else:
             print("Failed to get/create environment for CQL rollout.")
     else:
-        print("Skipping CQL rollout and plotting: CQL agent or environment not available.")
+        print("Skipping CQL rollout and plotting.")
 
-    # Clean up environment
     if continuous_env_for_dqn:
         continuous_env_for_dqn.close()
-        print("Closed CSTR environment.")
 
     print("Script finished.")
