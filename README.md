@@ -30,7 +30,6 @@ macOS/Linux:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
 pip install -r requirements.txt
 
 # Optional: make the venv available in Jupyter
@@ -41,7 +40,6 @@ Windows (PowerShell):
 ```powershell
 py -3 -m venv .venv
 .venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
 pip install -r requirements.txt
 
 # Optional: register the kernel for Jupyter
@@ -52,7 +50,6 @@ Windows (Cmd):
 ```bat
 py -3 -m venv .venv
 .venv\Scripts\activate.bat
-python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
@@ -61,7 +58,7 @@ To deactivate the venv later, run `deactivate`.
 ### Notebooks for Reactors
 The notebooks for the discretised chemical reactor and the continuous reactor can be found in the `src` directory.
 
-Start with the tabular setting (`src/TabularQlearning.ipnb`)first then move onto the more complex DQN notebook (`src/DQN.ipynb`).
+Start with the tabular setting (`src/TabularQlearning.ipynb`)first then move onto the more complex DQN notebook (`src/DQN.ipynb`).
 
 
 
